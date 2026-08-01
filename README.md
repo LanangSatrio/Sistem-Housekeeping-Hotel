@@ -252,11 +252,9 @@ Authorization: Bearer <token>
 ## 👥 Tim
 
 Project Kelompok B — Sistem Housekeeping Hotel
-*(isi nama anggota tim di sini)*
 
 ## 📄 Lisensi
 
-Proyek ini dibuat untuk keperluan tugas akademik.
+Aplikasi ini dibuat untuk keperluan tugas projek.
 
-
-<!-- test -->
+<!-- im back vrooo -->

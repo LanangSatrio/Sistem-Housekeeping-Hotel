@@ -16,6 +16,7 @@ const menuItems = [
     children: [
       { label: 'Status Kamar', to: '/statuskamar', icon: 'fa-solid fa-door-open' },
       { label: 'Pembagian Maintenance', to: '/pembagian-maintenance', icon: 'fa-solid fa-tools' },
+      { label: 'Logs Kamar', to: '/logs-kamar', icon: 'fa-solid fa-file-lines' },
     ],
   },
   { label: 'Riwayat Kebersihan', to: '/riwayat-pembersihan', icon: 'fa-solid fa-broom' },
@@ -25,14 +26,19 @@ const menuItems = [
 function Navbar({ pageTitle = 'Housekeeping' }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [mobileOpenDropdown, setMobileOpenDropdown] = useState(null);
   const profileRef = useRef(null);
+  const userMenuRef = useRef(null);
   const { user, logout } = useAuth();
 
   useEffect(() => {
     function handleClickOutside(e) {
       if (profileRef.current && !profileRef.current.contains(e.target)) {
         setIsProfileOpen(false);
+      }
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) {
+        setIsUserMenuOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -64,17 +70,48 @@ function Navbar({ pageTitle = 'Housekeeping' }) {
           {/* Right side: Profile + Gear */}
           <div className="hidden md:flex items-center gap-3">
              {/* Profile Avatar + Info */}
-             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center text-white text-sm font-medium">
-                {user?.employee_name?.[0]?.toUpperCase() || 'U'}
-              </div>
-              <div className="flex flex-col">
-                <span className="text-sm font-medium text-white">
-                  {user?.username || 'User'}
-                </span>
-                <span className="text-xs text-white/70 truncate max-w-[180px]">
-                  {user?.email || '-'}
-                </span>
+             <div className="relative" ref={userMenuRef}>
+              <button
+                onClick={() => setIsUserMenuOpen((prev) => !prev)}
+                className="flex items-center gap-3 group cursor-pointer"
+              >
+                <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center text-white text-sm font-medium shrink-0">
+                  {user?.employee_name?.[0]?.toUpperCase() || 'U'}
+                </div>
+                <div className="flex flex-col text-left">
+                  <span className="text-sm font-medium text-white truncate max-w-[60px] group-hover:max-w-[200px] transition-all duration-800">
+                    {user?.username || 'User'}
+                  </span>
+                  <span className="text-xs text-white/70 truncate max-w-[60px] group-hover:max-w-[200px] group-hover:underline transition-all duration-800">
+                    {user?.email || '-'}
+                  </span>
+                </div>
+              </button>
+
+              {/* Dropdown: View Profile & Log Out */}
+              <div
+                className={`absolute right-0 mt-2 w-44 bg-white rounded-lg shadow-xl border border-gray-100 py-1 origin-top-right transition-all duration-200 ease-out ${
+                  isUserMenuOpen
+                    ? 'opacity-100 scale-100 translate-y-0 pointer-events-auto'
+                    : 'opacity-0 scale-95 -translate-y-1 pointer-events-none'
+                }`}
+              >
+                <Link
+                  to="/profile"
+                  onClick={() => setIsUserMenuOpen(false)}
+                  className="flex items-center gap-2 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  <i className="fa-solid fa-user w-4 text-center text-gray-500"></i> View Profile
+                </Link>
+                <button
+                  onClick={() => {
+                    setIsUserMenuOpen(false);
+                    logout();
+                  }}
+                  className="flex items-center gap-2 w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50"
+                >
+                  <i className="fa-solid fa-arrow-right-from-bracket w-4 text-center"></i> Log Out
+                </button>
               </div>
             </div>
 
@@ -95,7 +132,7 @@ function Navbar({ pageTitle = 'Housekeeping' }) {
                     onClick={() => setIsProfileOpen(false)}
                     className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
                   >
-                    <i class="fa-solid fa-moon"></i> Dark Mode
+                    <i className="fa-solid fa-moon"></i> Dark Mode
                   </Link>
                   <button
                     onClick={() => {
@@ -104,7 +141,7 @@ function Navbar({ pageTitle = 'Housekeeping' }) {
                     }}
                     className="block w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
                   >
-                    <i class="fa-solid fa-outdent"></i> Log Out
+                    <i className="fa-solid fa-arrow-right-from-bracket"></i> Log Out
                   </button>
                 </div>
               )}
@@ -238,7 +275,7 @@ function Navbar({ pageTitle = 'Housekeeping' }) {
               }}
               className="mt-2 w-full px-3 py-2.5 rounded-md text-sm font-medium text-red-600 hover:bg-red-50 text-left"
             >
-              Log Out
+              <i className="fa-solid fa-arrow-right-from-bracket"></i> Log Out
             </button>
           </div>
         </div>
