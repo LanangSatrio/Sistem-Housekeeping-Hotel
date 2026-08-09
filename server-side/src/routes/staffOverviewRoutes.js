@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { getAllRooms, updateRoom } = require('../controllers/roomController');
+const staffOverviewController = require('../controllers/staffOverviewController');
 const { verifyToken, verifyRole } = require('../middlewares/auth');
 
+// Get staff overview
 router.use(verifyToken);
 router.use(verifyRole(['admin', 'staff']));
 
-router.get('/', getAllRooms);
-router.put('/:id', updateRoom);
+router.get('/overview', staffOverviewController.getStaffOverview);
 
 module.exports = router;
