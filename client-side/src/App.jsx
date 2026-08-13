@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import Navbar from "./components/Navbar";
 import Sidebar from "./components/Sidebar";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import Dashboard from "./pages/Dashboard";
-import DataKamar from "./pages/DataKamar";
 import StatusKamar from "./pages/StatusKamar";
 import RiwayatPembersihan from "./pages/RiwayatPembersihan";
 import PembagianMaintenance from "./pages/PembagianMaintenance";
+import StatusPembersihan from "./pages/StatusPembersihan";
+import PenugasanPembersihan from "./pages/PenugasanPembersihan";
 import LogsKamar from "./pages/LogsKamar";
 import Inventory from "./pages/Inventory";
 import Login from "./pages/Login";
@@ -15,6 +16,43 @@ import Staff from './pages/Staff';
 import EndAttendance from './pages/Endattendance';
 import AbsensiLogs from './pages/AbsensiLogs';
 import IzinForm from './pages/IzinForm';
+
+function MaintenancePage() {
+    return <PembagianMaintenance />;
+}
+
+function StatusPembersihanPage() {
+    const storedUser = (() => {
+        try {
+            const stored = localStorage.getItem('user');
+            return stored ? JSON.parse(stored) : null;
+        } catch {
+            return null;
+        }
+    })();
+
+    if (!storedUser?.current_role || storedUser.current_role !== 'admin') {
+        return <Navigate to="/dashboard" replace />;
+    }
+
+    return <StatusPembersihan />;
+}
+
+function CleaningPage() {
+    const storedUser = (() => {
+        try {
+            const stored = localStorage.getItem('user');
+            return stored ? JSON.parse(stored) : null;
+        } catch {
+            return null;
+        }
+    })();
+
+    if (storedUser?.current_role === 'admin') {
+        return <Navigate to="/status-pembersihan" replace />;
+    }
+    return <PenugasanPembersihan />;
+}
 
 function App () {
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -42,21 +80,22 @@ function App () {
 
     return(
         <Routes>
-            <Route path="/login" element={<Login/>}/>
-            <Route path="/register" element={<Register/>}/>
-            <Route path="/dashboard" element={routeLayout('Dashboard', <Dashboard/>)}/>
-            <Route path="/" element={routeLayout('Dashboard', <Dashboard/>)}/>
-            <Route path="/staff" element={routeLayout('Staff', <Staff/>)}/>
-            <Route path="/datakamar" element={routeLayout('Data Kamar', <DataKamar/>)}/>
-            <Route path="/statuskamar" element={routeLayout('Status Kamar', <StatusKamar/>)}/>
-            <Route path="/riwayatpembersihan" element={routeLayout('Riwayat Pembersihan', <RiwayatPembersihan/>)}/>
-            <Route path="/pembagian-maintenance" element={routeLayout('Pembagian Maintenance', <PembagianMaintenance/>)}/>
-            <Route path="/inventory" element={routeLayout('Inventory', <Inventory/>)}/>
-             <Route path="/logs-kamar" element={routeLayout('Logs Kamar', <LogsKamar/>)}/>
-             <Route path="/attendance/end/:id" element={routeLayout('Akhiri Absensi', <EndAttendance/>)}/>
-             <Route path="/absensi-logs" element={routeLayout('Log Absensi', <AbsensiLogs/>)}/>
-             <Route path="/izin" element={routeLayout('Izin', <IzinForm/>)}/>
-        </Routes>
+                <Route path="/login" element={<Login/>}/>
+                <Route path="/register" element={<Register/>}/>
+                <Route path="/dashboard" element={routeLayout('Dashboard', <Dashboard/>)}/>
+                <Route path="/" element={routeLayout('Dashboard', <Dashboard/>)}/>
+                <Route path="/staff" element={routeLayout('Staff', <Staff/>)}/>
+                <Route path="/statuskamar" element={routeLayout('Status Kamar', <StatusKamar/>)}/>
+                <Route path="/pembagian-maintenance" element={routeLayout('Pembagian Maintenance', <MaintenancePage/>)}/>
+                <Route path="/status-pembersihan" element={routeLayout('Status Pembersihan', <StatusPembersihanPage/>)}/>
+                <Route path="/pembagian-pembersihan" element={routeLayout('Penugasan Pembersihan', <CleaningPage/>)}/>
+                <Route path="/inventory" element={routeLayout('Inventory', <Inventory/>)}/>
+                <Route path="/riwayatpembersihan" element={routeLayout('Riwayat Kebersihan', <RiwayatPembersihan/>)}/>
+                <Route path="/logs-kamar" element={routeLayout('Logs Kamar', <LogsKamar/>)}/>
+                <Route path="/attendance/end/:id" element={routeLayout('Akhiri Absensi', <EndAttendance/>)}/>
+                <Route path="/absensi-logs" element={routeLayout('Log Absensi', <AbsensiLogs/>)}/>
+                <Route path="/izin" element={routeLayout('Izin', <IzinForm/>)}/>
+            </Routes>
     )
 }
 

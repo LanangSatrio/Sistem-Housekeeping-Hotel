@@ -1,5 +1,8 @@
 const pool = require('../config/db');
 const { asyncHandler } = require('../utils/asyncHandler');
+const { broadcast } = require('../utils/sse');
+
+const MIN_PHOTOS = 4;
 
 // GET /api/room-schedule/rooms-available
 const getAvailableRooms = asyncHandler(async (req, res) => {
@@ -8,7 +11,7 @@ const getAvailableRooms = asyncHandler(async (req, res) => {
        FROM rooms r
        JOIN room_types rt ON rt.id = r.room_type_id
        WHERE r.occupancy_status = 'available'
-      ORDER BY r.room_number`
+       ORDER BY r.room_number`
   );
   res.json({ success: true, data: rows });
 });
@@ -26,30 +29,26 @@ const getHousekeepingStaff = asyncHandler(async (req, res) => {
 });
 
 // GET /api/room-schedule
-// Menampilkan SEMUA kamar (urut room_number 101 -> 550), digabung dengan
-// histori jadwal maintenance-nya:
-//   - Kamar yang PERNAH dijadwalkan -> tetap muncul SEMUA barisnya (histori),
-//     jadi 1 kamar bisa muncul lebih dari sekali kalau pernah dimaintenance
-//     berkali-kali.
-//   - Kamar yang BELUM PERNAH dijadwalkan sama sekali -> muncul 1 baris
-//     kosong (title/tanggal/petugas/status = null), supaya semua kamar
-//     tetap kelihatan di tabel.
 const getAllSchedules = asyncHandler(async (req, res) => {
   const [rows] = await pool.query(`
-    SELECT * FROM (
+    SELECT combined.*,
+           staff_assign.assigned_staff_names,
+           staff_assign.assigned_staff_ids
+    FROM (
       SELECT
           rms.id AS schedule_id,
           r.id AS room_id,
           r.room_number AS no_kamar,
-          r.housekeeping_status,
           rms.title,
           rms.notes,
           e.full_name AS dijadwalkan_oleh,
           rms.scheduled_date,
+          rms.ended_at,
           rms.status,
           rms.started_at,
           rms.completed_at,
           rms.updated_at,
+          r.housekeeping_status,
           ROW_NUMBER() OVER (
               PARTITION BY r.id
               ORDER BY 
@@ -72,48 +71,39 @@ const getAllSchedules = asyncHandler(async (req, res) => {
           NULL AS schedule_id,
           r.id AS room_id,
           r.room_number AS no_kamar,
-          r.housekeeping_status,
           NULL AS title,
           NULL AS notes,
           NULL AS dijadwalkan_oleh,
           NULL AS scheduled_date,
+          NULL AS ended_at,
           NULL AS status,
           NULL AS started_at,
           NULL AS completed_at,
           NULL AS updated_at,
+          NULL AS housekeeping_status,
           1 AS rn
       FROM rooms r
       WHERE r.id NOT IN (SELECT DISTINCT room_id FROM room_maintenance_schedule)
     ) combined
+    LEFT JOIN (
+      SELECT rss.schedule_id,
+             GROUP_CONCAT(DISTINCT emp.full_name ORDER BY emp.full_name SEPARATOR ', ') AS assigned_staff_names,
+             GROUP_CONCAT(DISTINCT rss.employee_id ORDER BY rss.employee_id) AS assigned_staff_ids
+      FROM room_maintenance_schedule_staff rss
+      JOIN employees emp ON emp.id = rss.employee_id
+      GROUP BY rss.schedule_id
+    ) staff_assign ON staff_assign.schedule_id = combined.schedule_id
     WHERE rn = 1
     ORDER BY no_kamar ASC, scheduled_date DESC
   `);
 
-  const scheduleIds = rows.map((r) => r.schedule_id).filter(Boolean);
-  let staffMap = {};
-
-  if (scheduleIds.length > 0) {
-    const [staffRows] = await pool.query(
-      `SELECT rss.schedule_id, e.full_name, e.id AS employee_id
-         FROM room_maintenance_schedule_staff rss
-         JOIN employees e ON e.id = rss.employee_id
-        WHERE rss.schedule_id IN (?)`,
-      [scheduleIds]
-    );
-    staffRows.forEach((row) => {
-      if (!staffMap[row.schedule_id]) staffMap[row.schedule_id] = { names: [], ids: [] };
-      staffMap[row.schedule_id].names.push(row.full_name);
-      staffMap[row.schedule_id].ids.push(row.employee_id);
-    });
-  }
-
   const data = rows.map((r) => {
-    const staff = r.schedule_id ? (staffMap[r.schedule_id] || { names: [], ids: [] }) : { names: [], ids: [] };
+    const assignedStaffIds = r.assigned_staff_ids ? r.assigned_staff_ids.split(',') : [];
+    const assignedStaffNames = r.assigned_staff_names ? r.assigned_staff_names.split(',') : [];
     return {
       ...r,
-      id: r.schedule_id,
-      assigned_staff: staff.names,
-      assigned_staff_ids: staff.ids,
+      assigned_staff_ids: assignedStaffIds,
+      assigned_staff: assignedStaffNames,
     };
   });
 
@@ -121,15 +111,15 @@ const getAllSchedules = asyncHandler(async (req, res) => {
 });
 
 // POST /api/room-schedule
-// Body: { room_id, title, notes, scheduled_date, set_immediately, staff_ids: [] }
+// Body: { room_id, title, notes, scheduled_date, ended_at?, set_immediately }
 const createSchedule = asyncHandler(async (req, res) => {
   const {
     room_id,
     title,
     notes,
     scheduled_date,
+    ended_at,
     set_immediately,
-    staff_ids = [],
   } = req.body;
 
   if (!room_id || !title || !scheduled_date) {
@@ -140,17 +130,6 @@ const createSchedule = asyncHandler(async (req, res) => {
   }
 
   const scheduled_by = req.user.employee_id;
-
-  const [schedulerRows] = await pool.query(
-    `SELECT e.id FROM employees e JOIN positions p ON p.id = e.position_id WHERE e.id = ? AND p.name IN ('Housekeeping Supervisor', 'Housekeeping Staff')`,
-    [scheduled_by]
-  );
-  if (schedulerRows.length === 0) {
-    return res.status(403).json({
-      success: false,
-      message: 'Akses ditolak: Anda bukan Housekeeping Supervisor/Staff.',
-    });
-  }
 
   const [roomRows] = await pool.query(
     `SELECT occupancy_status AS status FROM rooms WHERE id = ?`,
@@ -166,27 +145,6 @@ const createSchedule = asyncHandler(async (req, res) => {
     });
   }
 
-  const validStaffIds = Array.isArray(staff_ids) ? staff_ids.filter(Boolean) : [];
-
-  if (validStaffIds.length > 0) {
-    const placeholders = validStaffIds.map(() => '?').join(',');
-    const [staffRows] = await pool.query(
-      `SELECT e.id FROM employees e
-         JOIN positions p ON p.id = e.position_id
-        WHERE e.id IN (${placeholders})
-          AND p.name IN ('Housekeeping Supervisor', 'Housekeeping Staff')`,
-      validStaffIds
-    );
-    const validIds = staffRows.map((r) => r.id);
-    const invalidIds = validStaffIds.filter((id) => !validIds.includes(id));
-    if (invalidIds.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Beberapa petugas yang dipilih bukan Housekeeping Supervisor/Staff yang valid.',
-      });
-    }
-  }
-
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -196,38 +154,28 @@ const createSchedule = asyncHandler(async (req, res) => {
 
     const [result] = await connection.query(
       `INSERT INTO room_maintenance_schedule
-          (room_id, scheduled_by, title, notes, scheduled_date, status, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [room_id, scheduled_by, title, notes || null, scheduled_date, initialStatus, startedAt]
+          (room_id, scheduled_by, title, notes, scheduled_date, ended_at, status, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [room_id, scheduled_by, title, notes || null, scheduled_date, ended_at || null, initialStatus, startedAt]
     );
 
-    const scheduleId = result.insertId;
-
     if (initialStatus === 'in_progress') {
-      // occupancy_status -> maintenance, DAN housekeeping_status -> cleaning
-      // (selama maintenance berlangsung, dianggap "Sedang Cleaning" di dashboard)
       await connection.query(
-        `UPDATE rooms SET occupancy_status = 'maintenance', housekeeping_status = 'cleaning' WHERE id = ?`,
+        `UPDATE rooms SET occupancy_status = 'maintenance', housekeeping_status = 'maintenance' WHERE id = ?`,
         [room_id]
       );
     }
 
-    if (validStaffIds.length > 0) {
-      const staffValues = validStaffIds.map((empId) => [scheduleId, empId]);
-      await connection.query(
-        `INSERT INTO room_maintenance_schedule_staff (schedule_id, employee_id) VALUES ?`,
-        [staffValues]
-      );
-    }
-
     await connection.commit();
+
+    broadcast('schedule:created', { id: result.insertId, room_id: room_id, status: initialStatus });
 
     res.status(201).json({
       success: true,
       message: set_immediately
         ? 'Kamar langsung di-set maintenance dan sudah ditarik dari daftar available.'
         : 'Jadwal maintenance berhasil dibuat. Kamar tetap available sampai tanggal tersebut.',
-      data: { id: scheduleId },
+      data: { id: result.insertId },
     });
   } catch (err) {
     await connection.rollback();
@@ -237,10 +185,45 @@ const createSchedule = asyncHandler(async (req, res) => {
   }
 });
 
+// PUT /api/room-schedule/:id
+const updateSchedule = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { title, notes, scheduled_date, ended_at } = req.body;
+
+  if (!title || !scheduled_date) {
+    return res.status(400).json({
+      success: false,
+      message: 'title dan scheduled_date wajib diisi.',
+    });
+  }
+
+  const [scheduleRows] = await pool.query(
+    `SELECT id, status FROM room_maintenance_schedule WHERE id = ?`,
+    [id]
+  );
+
+  if (scheduleRows.length === 0) {
+    return res.status(404).json({ success: false, message: 'Jadwal tidak ditemukan.' });
+  }
+
+  if (['completed', 'canceled'].includes(scheduleRows[0].status)) {
+    return res.status(409).json({
+      success: false,
+      message: 'Tidak dapat mengubah jadwal yang sudah selesai atau dibatalkan.',
+    });
+  }
+
+  await pool.query(
+    `UPDATE room_maintenance_schedule SET title = ?, notes = ?, scheduled_date = ?, ended_at = ?, updated_at = NOW() WHERE id = ?`,
+    [title, notes || null, scheduled_date, ended_at || null, id]
+  );
+
+  res.json({ success: true, message: 'Jadwal berhasil diperbarui.' });
+});
+
 // PUT /api/room-schedule/:id/start
 const startSchedule = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const employeeId = req.user.employee_id;
   const [scheduleRows] = await pool.query(
     `SELECT room_id, status FROM room_maintenance_schedule WHERE id = ?`,
     [id]
@@ -253,31 +236,17 @@ const startSchedule = asyncHandler(async (req, res) => {
     return res.status(409).json({ success: false, message: 'Jadwal ini sudah tidak berstatus scheduled.' });
   }
 
-  // Hanya staff yang ditugaskan pada jadwal ini yang boleh memulai maintenance
-  // Admin bisa memulai maintenance untuk staff lain
-  const [assignedRows] = await pool.query(
-    `SELECT 1 FROM room_maintenance_schedule_staff
-     WHERE schedule_id = ? AND employee_id = ?
-     LIMIT 1`,
-    [id, employeeId]
-  );
-  if (assignedRows.length === 0 && req.user.role !== 'admin') {
-    return res.status(403).json({
-      success: false,
-      message: 'Akses ditolak: Anda tidak ditugaskan pada maintenance ini.',
-    });
-  }
-
   await pool.query(
     `UPDATE room_maintenance_schedule SET status = 'in_progress', started_at = NOW() WHERE id = ?`,
     [id]
   );
 
-  // occupancy_status -> maintenance, housekeeping_status -> cleaning
   await pool.query(
-    `UPDATE rooms SET occupancy_status = 'maintenance', housekeeping_status = 'cleaning' WHERE id = ?`,
+    `UPDATE rooms SET occupancy_status = 'maintenance', housekeeping_status = 'maintenance' WHERE id = ?`,
     [scheduleRows[0].room_id]
   );
+
+  broadcast('schedule:started', { id, room_id: scheduleRows[0].room_id });
 
   res.json({ success: true, message: 'Maintenance dimulai. Kamar ditarik dari daftar available.' });
 });
@@ -285,8 +254,6 @@ const startSchedule = asyncHandler(async (req, res) => {
 // PUT /api/room-schedule/:id/complete
 const completeSchedule = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const employeeId = req.user.employee_id;
-
   const [scheduleRows] = await pool.query(
     `SELECT room_id FROM room_maintenance_schedule WHERE id = ? AND status = 'in_progress'`,
     [id]
@@ -296,21 +263,6 @@ const completeSchedule = asyncHandler(async (req, res) => {
     return res.status(409).json({
       success: false,
       message: 'Jadwal tidak ditemukan atau belum berstatus in_progress.',
-    });
-  }
-
-  // Hanya staff yang ditugaskan pada jadwal ini yang boleh menyelesaikannya
-  // Admin bisa menyelesaikan maintenance untuk staff lain
-  const [assignedRows] = await pool.query(
-    `SELECT 1 FROM room_maintenance_schedule_staff
-     WHERE schedule_id = ? AND employee_id = ?
-     LIMIT 1`,
-    [id, employeeId]
-  );
-  if (assignedRows.length === 0 && req.user.role !== 'admin') {
-    return res.status(403).json({
-      success: false,
-      message: 'Akses ditolak: Anda tidak ditugaskan pada maintenance ini.',
     });
   }
 
@@ -327,14 +279,13 @@ const completeSchedule = asyncHandler(async (req, res) => {
   );
 
   if (activeSchedules[0].count === 0) {
-    // Maintenance beneran selesai (nggak ada jadwal aktif lain nempel di kamar ini):
-    // occupancy_status -> available, housekeeping_status -> clean (BUKAN dirty,
-    // karena 'dirty' itu khusus jalur checkout tamu, bukan dari maintenance).
     await pool.query(
-      `UPDATE rooms SET occupancy_status = 'available', housekeeping_status = 'clean' WHERE id = ?`,
+      `UPDATE rooms SET occupancy_status = 'available', housekeeping_status = 'dirty' WHERE id = ?`,
       [roomId]
     );
   }
+
+  broadcast('schedule:completed', { id, room_id: roomId });
 
   res.json({ success: true, message: 'Maintenance selesai. Kamar kembali available.' });
 });
@@ -343,7 +294,7 @@ const completeSchedule = asyncHandler(async (req, res) => {
 const cancelSchedule = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const [scheduleRows] = await pool.query(
-    `SELECT room_id FROM room_maintenance_schedule WHERE id = ? AND status = 'scheduled'`,
+    `SELECT room_id FROM room_maintenance_schedule WHERE id = ? AND status IN ('scheduled', 'in_progress')`,
     [id]
   );
 
@@ -361,9 +312,6 @@ const cancelSchedule = asyncHandler(async (req, res) => {
     [id]
   );
 
-  // Catatan: cancel cuma bisa dilakukan selagi status masih 'scheduled' (belum
-  // pernah 'in_progress'), jadi housekeeping_status kamar itu belum pernah
-  // ikut diubah jadi 'cleaning' -> tidak perlu direset di sini.
   const [activeSchedules] = await pool.query(
     `SELECT COUNT(*) AS count FROM room_maintenance_schedule WHERE room_id = ? AND status IN ('scheduled', 'in_progress')`,
     [roomId]
@@ -371,12 +319,208 @@ const cancelSchedule = asyncHandler(async (req, res) => {
 
   if (activeSchedules[0].count === 0) {
     await pool.query(
-      `UPDATE rooms SET occupancy_status = 'available' WHERE id = ?`,
+      `UPDATE rooms SET occupancy_status = 'available', housekeeping_status = 'dirty' WHERE id = ?`,
       [roomId]
     );
   }
 
+  broadcast('schedule:canceled', { id, room_id: roomId });
+
   res.json({ success: true, message: 'Jadwal maintenance dibatalkan.' });
+});
+
+// POST /api/room-schedule/request
+const requestMaintenance = asyncHandler(async (req, res) => {
+  const { room_id, request_notes } = req.body;
+  const requestedBy = req.user.employee_id;
+
+  if (!room_id) {
+    return res.status(400).json({ success: false, message: 'room_id wajib diisi.' });
+  }
+
+  const [roomRows] = await pool.query(
+    `SELECT occupancy_status AS status FROM rooms WHERE id = ?`,
+    [room_id]
+  );
+  if (roomRows.length === 0) {
+    return res.status(404).json({ success: false, message: 'Kamar tidak ditemukan.' });
+  }
+  if (roomRows[0].status !== 'available') {
+    return res.status(409).json({
+      success: false,
+      message: `Kamar ini sedang berstatus '${roomRows[0].status}', tidak bisa diminta maintenance.`,
+    });
+  }
+
+  const [result] = await pool.query(
+    `INSERT INTO room_maintenance_schedule
+       (room_id, scheduled_by, requested_by, request_notes, title, scheduled_date, status)
+    VALUES (?, ?, ?, ?, ?, ?, 'scheduled')`,
+    [room_id, null, requestedBy, request_notes || null, 'Permintaan Maintenance', new Date().toISOString().slice(0, 10)]
+  );
+
+  broadcast('schedule:created', { id: result.insertId, room_id, status: 'scheduled' });
+
+  res.status(201).json({
+    success: true,
+    message: 'Permintaan maintenance berhasil dikirim ke supervisor.',
+    data: { id: result.insertId },
+  });
+});
+
+// PUT /api/room-schedule/:id/assign-staff
+const assignStaffToSchedule = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { employee_ids } = req.body;
+
+  if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'employee_ids harus berisi minimal satu ID petugas.',
+    });
+  }
+
+  const [scheduleRows] = await pool.query(
+    `SELECT id, status FROM room_maintenance_schedule WHERE id = ?`,
+    [id]
+  );
+
+  if (scheduleRows.length === 0) {
+    return res.status(404).json({ success: false, message: 'Jadwal tidak ditemukan.' });
+  }
+
+  if (['completed', 'canceled'].includes(scheduleRows[0].status)) {
+    return res.status(409).json({
+      success: false,
+      message: 'Tidak dapat menugaskan staf pada jadwal yang sudah selesai atau dibatalkan.',
+    });
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    await connection.query(
+      `DELETE FROM room_maintenance_schedule_staff WHERE schedule_id = ?`,
+      [id]
+    );
+
+    const assignments = employee_ids
+      .map((employeeId) => Number(employeeId))
+      .filter((employeeId) => !Number.isNaN(employeeId))
+      .map((employeeId) => [id, employeeId]);
+
+    if (assignments.length > 0) {
+      await connection.query(
+        `INSERT IGNORE INTO room_maintenance_schedule_staff (schedule_id, employee_id) VALUES ?`,
+        [assignments]
+      );
+    }
+
+    await connection.commit();
+    broadcast('schedule:staffAssigned', { id, employee_ids });
+    res.json({
+      success: true,
+      message: 'Petugas berhasil ditugaskan pada jadwal pembersihan.',
+    });
+  } catch (err) {
+    await connection.rollback();
+    throw err;
+  } finally {
+    connection.release();
+  }
+});
+
+// POST /api/room-schedule/:id/upload-photos
+const uploadPhotos = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const employeeId = req.user.employee_id;
+
+  const [scheduleRows] = await pool.query(
+    `SELECT id, status, photos FROM room_maintenance_schedule WHERE id = ?`,
+    [id]
+  );
+
+  if (scheduleRows.length === 0) {
+    return res.status(404).json({ success: false, message: 'Jadwal tidak ditemukan.' });
+  }
+  if (scheduleRows[0].status !== 'in_progress') {
+    return res.status(409).json({ success: false, message: 'Maintenance ini belum sedang berlangsung.' });
+  }
+
+  const [assignedRows] = await pool.query(
+    `SELECT 1 FROM room_maintenance_schedule_staff WHERE schedule_id = ? AND employee_id = ? LIMIT 1`,
+    [id, employeeId]
+  );
+  if (assignedRows.length === 0 && req.user.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      message: 'Akses ditolak: Anda tidak ditugaskan pada maintenance ini.',
+    });
+  }
+
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ success: false, message: 'Tidak ada foto yang diupload.' });
+  }
+
+  const existingPhotos = scheduleRows[0].photos ? JSON.parse(scheduleRows[0].photos) : [];
+  const newPhotos = req.files.map((file) => `/uploads/maintenance/${file.filename}`);
+  const updatedPhotos = [...existingPhotos, ...newPhotos];
+
+  await pool.query(
+    `UPDATE room_maintenance_schedule SET photos = ? WHERE id = ?`,
+    [JSON.stringify(updatedPhotos), id]
+  );
+
+  res.json({ success: true, message: 'Foto berhasil diupload.', photos: updatedPhotos });
+});
+
+// GET /api/room-schedule/my-schedule
+const getMySchedule = asyncHandler(async (req, res) => {
+  const employeeId = req.user.employee_id;
+
+  const [rows] = await pool.query(
+    `SELECT
+       rms.id AS schedule_id,
+       r.id AS room_id,
+       r.room_number AS no_kamar,
+       rms.title,
+       rms.notes,
+       rms.scheduled_date,
+       rms.status,
+       rms.started_at,
+       rms.completed_at,
+       rms.photos,
+       rms.request_notes,
+       e.full_name AS dijadwalkan_oleh,
+       GROUP_CONCAT(DISTINCT rss2.employee_id ORDER BY rss2.employee_id) AS assigned_staff_ids,
+       GROUP_CONCAT(DISTINCT emp.full_name ORDER BY emp.full_name) AS assigned_staff_names
+     FROM room_maintenance_schedule rms
+     JOIN rooms r ON r.id = rms.room_id
+     LEFT JOIN employees e ON e.id = rms.scheduled_by
+     JOIN room_maintenance_schedule_staff rss ON rss.schedule_id = rms.id
+     LEFT JOIN room_maintenance_schedule_staff rss2 ON rss2.schedule_id = rms.id
+     LEFT JOIN employees emp ON emp.id = rss2.employee_id
+     WHERE rss.employee_id = ?
+       AND rms.status IN ('scheduled', 'in_progress')
+     GROUP BY rms.id, r.id, r.room_number, rms.title, rms.notes, rms.scheduled_date,
+              rms.status, rms.started_at, rms.completed_at, rms.photos, rms.request_notes,
+              e.full_name
+     ORDER BY rms.scheduled_date DESC`,
+    [employeeId]
+  );
+
+  const data = rows.map((r) => {
+    const assignedStaffIds = r.assigned_staff_ids ? r.assigned_staff_ids.split(',') : [];
+    const assignedStaffNames = r.assigned_staff_names ? r.assigned_staff_names.split(',') : [];
+    return {
+      ...r,
+      assigned_staff_ids: assignedStaffIds,
+      assigned_staff: assignedStaffNames,
+    };
+  });
+
+  res.json({ success: true, data });
 });
 
 module.exports = {
@@ -384,7 +528,12 @@ module.exports = {
   getHousekeepingStaff,
   getAllSchedules,
   createSchedule,
+  updateSchedule,
   startSchedule,
   completeSchedule,
   cancelSchedule,
+  requestMaintenance,
+  assignStaffToSchedule,
+  uploadPhotos,
+  getMySchedule,
 };

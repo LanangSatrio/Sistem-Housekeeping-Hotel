@@ -11,17 +11,18 @@ const menuItems = [
     children: [
       { label: 'Status Kamar', to: '/statuskamar', icon: 'fa-solid fa-door-open' },
       { label: 'Pembagian Maintenance', to: '/pembagian-maintenance', icon: 'fa-solid fa-tools' },
+      { label: 'Status Pembersihan', to: '/status-pembersihan', icon: 'fa-solid fa-broom', roles: ['admin'] },
+      { label: 'Penugasan Pembersihan', to: '/pembagian-pembersihan', icon: 'fa-solid fa-broom', roles: ['staff'] },
       { label: 'Logs Kamar', to: '/logs-kamar', icon: 'fa-solid fa-file-lines' },
     ],
   },
-  { label: 'Riwayat Kebersihan', to: '/riwayatpembersihan', icon: 'fa-solid fa-broom'},
+  { label: 'Riwayat Kebersihan', to: '/riwayatpembersihan', icon: 'fa-solid fa-broom' },
   { label: 'Inventory', to: '/inventory', icon: 'fa-solid fa-box' },
 ];
 
 function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }) {
   const { user } = useAuth();
   const [openDropdown, setOpenDropdown] = useState(null);
-  const [searchOpen, setSearchOpen] = useState(false);
   const [collapsedPopover, setCollapsedPopover] = useState({ open: false, label: null, pos: null });
   const popoverRef = useRef(null);
 
@@ -54,6 +55,16 @@ function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [collapsedPopover.open]);
 
+  const filteredMenuItems = menuItems.map((item) => {
+    if (!item.children) return item;
+    return {
+      ...item,
+      children: item.children.filter((child) =>
+        !child.roles || child.roles.includes(user?.current_role)
+      ),
+    };
+  });
+
   return (
     <>
       {/* Mobile backdrop */}
@@ -82,100 +93,25 @@ function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }) {
 
       {collapsed ? (
         <div className="p-2 flex justify-center">
-          <button
-            type="button"
-            title="Search"
-            onClick={() => setSearchOpen(true)}
-            className="w-8 h-8 rounded-full bg-white/15 flex items-center justify-center text-white/80 hover:bg-white/25 transition-colors"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-          </button>
-        </div>
-      ) : (
-        <div className="p-4">
-          <div className="flex items-center gap-2 bg-white/15 rounded-full px-4 py-2.5">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              className="text-white/80"
-            >
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              type="search"
-              placeholder="Search"
-              aria-label="Search"
-              className="bg-transparent text-white placeholder-white/70 text-sm outline-none w-full"
-            />
+          <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white text-sm font-bold">
+            G
           </div>
         </div>
-      )}
-
-      {/* Search overlay (appears when search icon clicked while collapsed) */}
-      {searchOpen && (
-        <div
-          className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center pt-18"
-          onClick={() => setSearchOpen(false)}
-        >
-          <div
-            className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 mt-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                setSearchOpen(false);
-              }}
-              className="flex items-center p-3 gap-2"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                className="text-gray-400"
-              >
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              <input
-                type="search"
-                placeholder="Search..."
-                autoFocus
-                className="flex-1 outline-none text-gray-800 text-sm"
-              />
-              <button
-                type="button"
-                onClick={() => setSearchOpen(false)}
-                className="text-gray-500 hover:text-gray-700 text-lg"
-              >
-                ×
-              </button>
-            </form>
+      ) : (
+        <div className="p-4 flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center text-white text-sm font-bold shrink-0">
+            G
+          </div>
+          <div className="text-white truncate">
+            <p className="text-sm font-semibold leading-tight">Grand Nusantara Hotel</p>
+            <p className="text-[11px] text-white/70 leading-tight">Housekeeping</p>
           </div>
         </div>
       )}
 
       {/* Menu */}
-      <nav className="flex flex-col overflow-y-auto">
-        {menuItems.map((item) => {
+      <nav className="flex flex-col overflow-y-auto mt-4">
+        {filteredMenuItems.map((item) => {
           if (item.children) {
             const isOpen = openDropdown === item.label;
             return (
@@ -249,7 +185,7 @@ function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }) {
                 {!collapsed && (
                   <div
                     className={`overflow-hidden transition-all duration-300 ease-in-out ${
-                      isOpen ? 'max-h-40 opacity-100' : 'max-h-0 opacity-0'
+                      isOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
                     }`}
                   >
                     <div className="bg-blue-700/30">
