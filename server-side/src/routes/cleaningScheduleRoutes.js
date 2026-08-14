@@ -8,9 +8,12 @@ const {
     updateCleaningSchedule,
     startCleaningSchedule,
     completeCleaningSchedule,
+    inspectCleaningSchedule,
+    revertCleaningSubmission,
     cancelCleaningSchedule,
     assignStaffToCleaningSchedule,
     uploadCleaningPhotos,
+    deleteCleaningPhoto,
     getMyCleaningSchedule,
 } = require('../controllers/cleaningScheduleController');
 const { verifyToken, verifyRole } = require('../middlewares/auth');
@@ -27,8 +30,11 @@ router.post('/', createCleaningSchedule);
 router.put('/:id', updateCleaningSchedule);
 router.put('/:id/assign-staff', assignStaffToCleaningSchedule);
 router.post('/:id/upload-photos', uploadMaintenancePhotos.array('photos', 20), uploadCleaningPhotos);
+router.delete('/:id/photos', deleteCleaningPhoto);
 router.put('/:id/start', startCleaningSchedule);
 router.put('/:id/complete', completeCleaningSchedule);
+router.put('/:id/inspect', inspectCleaningSchedule);
+router.post('/:id/revert-submit', revertCleaningSubmission);
 router.put('/:id/cancel', cancelCleaningSchedule);
 
 module.exports = router;

@@ -22,7 +22,7 @@ function PenugasanPembersihan() {
   const [attendanceLoading, setAttendanceLoading] = useState(true);
   const fileInputRefs = useRef({});
 
-  const inProgressTasks = schedules.filter((s) => s.status === 'in_progress');
+  const inProgressTasks = schedules.filter((s) => s.status === 'in_progress' || (s.status === 'completed' && (s.inspection_status === 'pending' || s.inspection_status === 'revision')));
   const scheduledTasks = schedules.filter((s) => s.status === 'scheduled');
 
   const fetchMySchedule = useCallback(async () => {
@@ -94,6 +94,7 @@ function PenugasanPembersihan() {
     eventSource.addEventListener('cleaning:started', refresh);
     eventSource.addEventListener('cleaning:completed', refresh);
     eventSource.addEventListener('cleaning:canceled', refresh);
+    eventSource.addEventListener('cleaning:inspected', refresh);
     eventSource.addEventListener('cleaning:staffAssigned', refresh);
     eventSource.addEventListener('schedule:started', refresh);
     eventSource.addEventListener('schedule:completed', refresh);
@@ -181,6 +182,40 @@ function PenugasanPembersihan() {
     }
   };
 
+  const handleDeletePhoto = async (scheduleId, photoPath) => {
+    const result = await Swal.fire({
+      icon: 'warning',
+      title: 'Hapus foto?',
+      text: 'Foto yang dihapus tidak dapat dikembalikan.',
+      showConfirmButton: true,
+      confirmButtonText: 'Ya, hapus',
+      cancelButtonText: 'Batal',
+      showCancelButton: true,
+    });
+    if (!result.isConfirmed) return;
+
+    try {
+      const res = await fetch(`http://localhost:3000/api/cleaning-schedule/${scheduleId}/photos`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ photo: photoPath }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        Swal.fire({ icon: 'success', title: 'Berhasil', text: data.message, timer: 1000, showConfirmButton: false });
+        fetchMySchedule();
+      } else {
+        Swal.fire({ icon: 'error', title: 'Gagal', text: data.message });
+      }
+    } catch (err) {
+      Swal.fire({ icon: 'error', title: 'Gagal', text: err.message });
+    }
+  };
+
   const openCleaningModal = () => {
     const myId = Number(user?.employee_id);
     setCleaningForm({
@@ -259,6 +294,44 @@ function PenugasanPembersihan() {
     try {
       const res = await fetch(`http://localhost:3000/api/cleaning-schedule/${scheduleId}/complete`, {
         method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await res.json();
+      if (data.success) {
+        Swal.fire({
+          icon: 'success',
+          title: 'Berhasil',
+          text: data.message,
+          timer: 1500,
+          showConfirmButton: false,
+        });
+        fetchMySchedule();
+      } else {
+        Swal.fire({ icon: 'error', title: 'Gagal', text: data.message });
+      }
+    } catch (err) {
+      Swal.fire({ icon: 'error', title: 'Gagal', text: err.message });
+    }
+  };
+
+  const handleRevertSubmit = async (scheduleId) => {
+    const result = await Swal.fire({
+      icon: 'warning',
+      title: 'Batalkan pengajuan?',
+      text: 'Anda akan kembali ke status mengerjakan dan dapat melanjutkan pembersihan.',
+      showConfirmButton: true,
+      confirmButtonText: 'Ya, batalkan',
+      cancelButtonText: 'Tidak',
+      showCancelButton: true,
+    });
+    if (!result.isConfirmed) return;
+
+    try {
+      const res = await fetch(`http://localhost:3000/api/cleaning-schedule/${scheduleId}/revert-submit`, {
+        method: 'POST',
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json',
@@ -365,7 +438,9 @@ function PenugasanPembersihan() {
                     uploading={uploading}
                     fileInputRefs={fileInputRefs}
                     onUploadPhotos={handleUploadPhotos}
+                    onDeletePhoto={handleDeletePhoto}
                     onComplete={handleComplete}
+                    onRevertSubmit={handleRevertSubmit}
                     parsePhotos={parsePhotos}
                     getTimeAgo={getTimeAgo}
                     minPhotos={MIN_PHOTOS}

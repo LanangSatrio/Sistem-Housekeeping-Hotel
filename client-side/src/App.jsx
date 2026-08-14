@@ -10,12 +10,15 @@ import StatusPembersihan from "./pages/StatusPembersihan";
 import PenugasanPembersihan from "./pages/PenugasanPembersihan";
 import LogsKamar from "./pages/LogsKamar";
 import Inventory from "./pages/Inventory";
+import InventoryMasterData from "./pages/InventoryMasterData";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Staff from './pages/Staff';
 import EndAttendance from './pages/Endattendance';
 import AbsensiLogs from './pages/AbsensiLogs';
 import IzinForm from './pages/IzinForm';
+import Profile from './pages/Profile';
+import { ThemeProvider, useTheme } from './context/ThemeContext';
 
 function MaintenancePage() {
     return <PembagianMaintenance />;
@@ -54,17 +57,17 @@ function CleaningPage() {
     return <PenugasanPembersihan />;
 }
 
-function App () {
+function AppContent() {
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+    const { isDark } = useTheme();
 
     const sidebarWidth = sidebarCollapsed ? 'md:ml-16' : 'md:ml-56';
 
-    const toggleMobileSidebar = () => setMobileSidebarOpen((prev) => !prev);
     const closeMobileSidebar = () => setMobileSidebarOpen(false);
 
     const routeLayout = (pageTitle, children) => (
-        <div className="flex min-h-screen bg-gray-50 relative">
+        <div className={`flex min-h-screen relative ${isDark ? 'bg-gray-900' : 'bg-gray-50'}`}>
             <Sidebar 
                 collapsed={sidebarCollapsed} 
                 onToggle={() => setSidebarCollapsed(prev => !prev)}
@@ -90,12 +93,22 @@ function App () {
                 <Route path="/status-pembersihan" element={routeLayout('Status Pembersihan', <StatusPembersihanPage/>)}/>
                 <Route path="/pembagian-pembersihan" element={routeLayout('Penugasan Pembersihan', <CleaningPage/>)}/>
                 <Route path="/inventory" element={routeLayout('Inventory', <Inventory/>)}/>
+                <Route path="/inventory/master-data" element={routeLayout('Master Data Inventory', <InventoryMasterData/>)}/>
                 <Route path="/riwayatpembersihan" element={routeLayout('Riwayat Kebersihan', <RiwayatPembersihan/>)}/>
                 <Route path="/logs-kamar" element={routeLayout('Logs Kamar', <LogsKamar/>)}/>
                 <Route path="/attendance/end/:id" element={routeLayout('Akhiri Absensi', <EndAttendance/>)}/>
                 <Route path="/absensi-logs" element={routeLayout('Log Absensi', <AbsensiLogs/>)}/>
                 <Route path="/izin" element={routeLayout('Izin', <IzinForm/>)}/>
+                <Route path="/profile" element={routeLayout('Profile', <Profile/>)}/>
             </Routes>
+    )
+}
+
+function App () {
+    return(
+        <ThemeProvider>
+            <AppContent />
+        </ThemeProvider>
     )
 }
 
